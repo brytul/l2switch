@@ -25,6 +25,8 @@ import org.opendaylight.l2switch.flow.json.PolicyParser;
 import org.opendaylight.l2switch.flow.json.GetFile;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.*;
+import java.math.*;
 import org.opendaylight.l2switch.flow.chain.ServiceChain;
 import org.opendaylight.l2switch.flow.chain.PolicyMapBuilder;
 import java.util.HashMap;
@@ -56,7 +58,8 @@ public class L2SwitchMainProvider {
     private HashMap<String, PolicyStatus> policyMap = new HashMap<String, PolicyStatus>();
     private AlertReceiver mboxAlertServer = new AlertReceiver();
     private boolean pkt_signing = false;
-    private boolean prestart = false;
+    private boolean prestart = true;
+    private static final String OPENFLOW_PREFIX = "openflow:";
 
     public L2SwitchMainProvider(final DataBroker dataBroker,
             final NotificationService notificationPublishService,
@@ -130,25 +133,35 @@ public class L2SwitchMainProvider {
             }else{
                 LOG.info("WARNING - pkt_signing is off which may affect container connectivity!");                
             }
+
+            ReactiveFlowWriter reactiveFlowWriter;
             
             if(prestart){
-                prestartOption();
-
-            }
-
-            ReactiveFlowWriter reactiveFlowWriter = new ReactiveFlowWriter(inventoryReader,
+                HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>> srcMac2contNCR = prestartOption();
+                reactiveFlowWriter = new ReactiveFlowWriter(inventoryReader,
                                    flowWriterService,
                                    dataplaneIP, dockerPort,
                                    ovsPort, remote_ovs_port,
-                                   OFversion, policy, policyMap, pkt_signing, prestart);
+                                   OFversion, policy, policyMap, 
+                                   pkt_signing, prestart, srcMac2contNCR);
+            }else{
+                reactiveFlowWriter = new ReactiveFlowWriter(inventoryReader,
+                                   flowWriterService,
+                                   dataplaneIP, dockerPort,
+                                   ovsPort, remote_ovs_port,
+                                   OFversion, policy, policyMap, 
+                                   pkt_signing, prestart, null);
+            }
+
             
+
             
             reactFlowWriterReg = notificationService.registerNotificationListener(reactiveFlowWriter);
 
-	    // Start up listening socket to receive middlebox alters
-	    mboxAlertServer.setPort(Integer.parseInt(this.alertPort));
-	    setupAlertReceiver(reactiveFlowWriter);
-	    mboxAlertServer.startServer();
+    	    // Start up listening socket to receive middlebox alters
+    	    mboxAlertServer.setPort(Integer.parseInt(this.alertPort));
+    	    setupAlertReceiver(reactiveFlowWriter);
+    	    mboxAlertServer.startServer();
 		    
         }
 
@@ -162,26 +175,47 @@ public class L2SwitchMainProvider {
 
 
     //NEEDED to build back out the FULL contNCR: ncrs[i]=this.containerCalls.getContainerNodeConnectorRef(this.nodeStr, contOFPorts[i]);
+    //For A type: need to add route
 
-    public void prestartOption(){
-        HashMap<String, NodeConnectorRef[]> srcMac2contNCR = new HashMap<String, NodeConnectorRef[]>();
+    public HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>> prestartOption(){
+        String nodeStr = "empty";
+        try{
+            //InetAddress ip;
+            //ip = InetAddress.getByName("br0");
+            NetworkInterface br0 = NetworkInterface.getByName("br0");
+            byte[] mac = br0.getHardwareAddress();
+            System.out.println("HW: " + mac);
+            System.out.println("HW to int: " + new BigInteger(1, mac).toString()); //  
+            nodeStr = (OPENFLOW_PREFIX + new BigInteger(1, mac).toString());
+            System.out.println(nodeStr);
+
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+        HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>> src2cont = new HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>>();
         String placeholder_IP = "0.0.0.0";
         NodeConnectorRef[] contNCRs;
+        HashMap<ServiceChain,NodeConnectorRef[]> inner = new HashMap<ServiceChain,NodeConnectorRef[]>();
 
         for (int i = 0; i < policy.parsed.getN(); i++){
             String contImageName = policy.parsed.devices[i].getProtections()[0].images[0];
             String contName = policy.parsed.devices[i].getProtections()[0].getImageOpts()[0].contName;            
             String contType = policy.parsed.devices[i].getProtections()[0].getChain().split("-")[0];
-            System.out.println("Image: " + contImageName + " ContName: " + contName + " contType: " + contType);
+            String srcMac = policy.parsed.devices[i].inMAC;
+            System.out.println("SrcMac: " + srcMac + " ---- Image: " + contImageName + " ContName: " + contName + " contType: " + contType);
             //contNCRs = policy.parsed.devices[i].getProtections()[0].getChain
-            ServiceChain scWorker = new ServiceChain(dataplaneIP, dockerPort, ovsPort, OFversion, remote_ovs_port, policy.parsed.devices[i], String.valueOf(i), placeholder_IP); 
-            srcMac2contNCR.put(policy.parsed.devices[i].inMAC, scWorker.pre_start());
+            
+            ServiceChain scWorker = new ServiceChain(dataplaneIP, dockerPort, ovsPort, OFversion, remote_ovs_port, policy.parsed.devices[i], String.valueOf(i), placeholder_IP, nodeStr); 
+            inner.put(scWorker, scWorker.pre_start());
+            src2cont.put(policy.parsed.devices[i].inMAC, inner);
         }
 
         // Print keys and values
-        for (String i : srcMac2contNCR.keySet()) {
-          System.out.println("key: " + i + " value: " + srcMac2contNCR.get(i));
+        //System.out.println(src2cont);
+        for (String i : src2cont.keySet()) {
+          System.out.println("key: " + i + " value: " + src2cont.get(i));
         }
+        return src2cont;
     }
 
     public void close() {

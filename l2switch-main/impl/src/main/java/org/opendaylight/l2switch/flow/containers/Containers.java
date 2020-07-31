@@ -132,7 +132,9 @@ public class Containers {
 
     public String addPortOnContainer_get(String container_name, String cont_iface, String ovsBridge_remotePort) { 
 	String OFport=docker.remoteAddContainerPort(this.remoteOvsBridge, container_name, cont_iface, this.remoteIP, this.remoteOvsPort, this.remoteDockerPort, ovsBridge_remotePort, this.OpenFlowVersion);
-    System.out.println("RemoteOVSBridge: " + this.remoteOvsBridge);
+    System.out.println("RemoteOVSBridge: " + this.remoteOvsBridge);    
+    //NodeId thingy = new nodeId(this.remoteOvsBridge);
+
 	return OFport;
     }        
 

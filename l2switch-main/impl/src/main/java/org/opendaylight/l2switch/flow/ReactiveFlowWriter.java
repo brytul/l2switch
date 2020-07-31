@@ -50,6 +50,7 @@ public class ReactiveFlowWriter implements ArpPacketListener {
     private VSwitch vswitch;
     private boolean pkt_signing;
     private boolean prestart;
+    private HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>> srcMac2contNCR;
 
     public ReactiveFlowWriter(InventoryReader inventoryReader,
 			      FlowWriterService flowWriterService) {
@@ -63,7 +64,8 @@ public class ReactiveFlowWriter implements ArpPacketListener {
 			      String ovsPort, String remoteOVSPort,
 			      String OFversion, PolicyParser policy,
 			      HashMap<String, PolicyStatus> policyMap,
-                  boolean pkt_signing, boolean prestart) {
+                  boolean pkt_signing, boolean prestart, 
+                  HashMap<String, HashMap<ServiceChain,NodeConnectorRef[]>> srcMac2contNCR) {
         this.inventoryReader = inventoryReader;
         this.flowWriterService = flowWriterService;
 	this.dataplaneIP=dataplaneIP;
@@ -76,6 +78,9 @@ public class ReactiveFlowWriter implements ArpPacketListener {
 	this.vswitch=new VSwitch(dataplaneIP, remoteOVSPort, OFversion);
     this.pkt_signing = pkt_signing;
     this.prestart = prestart;
+    if(prestart){
+        this.srcMac2contNCR = srcMac2contNCR;
+    }
     }    
 
     /**
@@ -157,15 +162,38 @@ public class ReactiveFlowWriter implements ArpPacketListener {
 		    policyMap.get(srcMac).setOutNCR(destNodeConnector);
             policyMap.get(srcMac).setIOT(iot_IP);
 		    String sourceRange=getCDIR(arpPacket.getSourceProtocolAddress(), "32");
-		    String destRange=getCDIR(arpPacket.getDestinationProtocolAddress(), "32");
+		    String destRange=getCDIR(arpPacket.getDestinationProtocolAddress(), "32");            
 		    String[] routes={sourceRange, destRange};
             System.out.println("Routes: " + routes[0] + ":" + routes[1]);
-            System.out.println("rawPacket.ingress:" +  rawPacket.getIngress().getValue());
-            System.out.println("inNCR (which is the rawPacket.getIngress):" + inNCR);
-            System.out.println("outNCR: " + destNodeConnector);
-		    ServiceChain scWorker = new ServiceChain(this.dataplaneIP, this.dockerPort, this.ovsPort, this.OFversion, routes, rawPacket.getIngress(), this.remoteOVSPort, policy.parsed.devices[devNum], String.valueOf(devNum), inNCR, destNodeConnector, iot_IP);
-            // routes, rawPacket.getIngress(), inNCR, destNodeConnector cannot be gathered during prestart
-		    NewFlows updates = scWorker.setupChain();
+            //System.out.println("rawPacket.ingress:" +  rawPacket.getIngress().getValue());
+            //System.out.println("inNCR (which is the rawPacket.getIngress):" + inNCR);
+            //System.out.println("outNCR: " + destNodeConnector);
+            NewFlows updates = null;
+            if(prestart){
+                if(srcMac2contNCR.containsKey(srcMac)){
+                    System.out.println("Matching srcMac from prestart: " + srcMac);                     
+                    HashMap<ServiceChain,NodeConnectorRef[]> inner2 = srcMac2contNCR.get(srcMac);
+                    ServiceChain scWorker = inner2.keySet().stream().findFirst().get();
+                    // fill in missing pieces from ARP packet that was captured
+                    scWorker.getContName();
+                    scWorker.setOutNCR(inNCR);
+                    scWorker.setInNCR(destNodeConnector);
+                    scWorker.setRoutes(routes);
+                    updates = scWorker.pre_start_next_step(inner2.get(inner2.keySet().stream().findFirst().get()));
+                    // routes, rawPacket.getIngress(), inNCR, destNodeConnector cannot be gathered during prestart
+                }else{
+                    //We are in prestart mode but no srcMac matched any of our pre started containers.  This really should never be reached b/c it means the srcMac wasn't accounted for in devPolicy
+                    ServiceChain scWorker = new ServiceChain(this.dataplaneIP, this.dockerPort, this.ovsPort, this.OFversion, routes, rawPacket.getIngress(), this.remoteOVSPort, policy.parsed.devices[devNum], String.valueOf(devNum), inNCR, destNodeConnector, iot_IP);
+                    updates = scWorker.setupChain();
+                }
+                
+                
+                
+            }else{
+                ServiceChain scWorker = new ServiceChain(this.dataplaneIP, this.dockerPort, this.ovsPort, this.OFversion, routes, rawPacket.getIngress(), this.remoteOVSPort, policy.parsed.devices[devNum], String.valueOf(devNum), inNCR, destNodeConnector, iot_IP);
+                updates = scWorker.setupChain();
+            }
+		    
 		    ActionSet actions = new ActionSet("signkernel", "verifykernel");
 		    for(RuleDescriptor rule:updates.rules){
                 

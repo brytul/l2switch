@@ -68,14 +68,15 @@ public class InventoryReader {
             dataObjectOptional = readOnlyTransaction.read(LogicalDatastoreType.OPERATIONAL, nodeInsId).get();
             if (dataObjectOptional.isPresent()) {
                 Node node = (Node) dataObjectOptional.get();
-                LOG.debug("Looking address{} in node : {}", macAddress, nodeInsId);
+                LOG.debug("Looking address{} in node : {}", macAddress, nodeInsId);                
                 for (NodeConnector nc : node.getNodeConnector().values()) {
                     // Don't look for mac in discarding node connectors
                     StpStatusAwareNodeConnector saNodeConnector = nc.augmentation(StpStatusAwareNodeConnector.class);
                     if (saNodeConnector != null && StpStatus.Discarding.equals(saNodeConnector.getStatus())) {
                         continue;
                     }
-                    LOG.debug("Looking address{} in nodeconnector : {}", macAddress, nc.key());
+                    LOG.debug("Looking address{} in nodeconnector : {}", macAddress, nc.key());                    
+
                     AddressCapableNodeConnector acnc = nc.augmentation(AddressCapableNodeConnector.class);
                     if (acnc != null) {
                         List<Addresses> addressesList = new ArrayList<Addresses>(acnc.getAddresses().values());
@@ -85,7 +86,7 @@ public class InventoryReader {
                                     destNodeConnector = new NodeConnectorRef(
                                             nodeInsId.child(NodeConnector.class, nc.key()));
                                     latest = add.getLastSeen();
-                                    LOG.debug("Found address{} in nodeconnector : {}", macAddress, nc.key());
+                                    LOG.debug("Found address{} in nodeconnector : {}", macAddress, nc.key());                                    
                                     break;
                                 }
                             }
